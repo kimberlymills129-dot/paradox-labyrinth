@@ -37,12 +37,12 @@
             cursor: none;
         }
 
-        /* 玻璃拟态 UI */
         #ui-layer {
             position: absolute;
             top: 20px; left: 20px; right: 20px;
             display: flex; justify-content: space-between;
             pointer-events: none;
+            z-index: 50;
         }
 
         .stat-card {
@@ -69,8 +69,8 @@
 
         h1 {
             font-size: 3rem;
-            margin-bottom: 0;
-            background: linear-gradient(to right, var(--neon-blue), var(--neon-pink));
+            margin: 0;
+            background: linear-gradient(to right, #00d2ff, #ff007f);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             text-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
@@ -80,12 +80,14 @@
             color: #666;
             margin-bottom: 40px;
             font-size: 0.9rem;
+            text-align: center;
+            padding: 0 20px;
         }
 
         .btn {
             background: transparent;
-            border: 1px solid var(--neon-blue);
-            color: var(--neon-blue);
+            border: 1px solid #00d2ff;
+            color: #00d2ff;
             padding: 15px 50px;
             font-size: 1.1rem;
             border-radius: 30px;
@@ -95,22 +97,21 @@
             letter-spacing: 3px;
         }
 
-        .btn:hover {
-            background: var(--neon-blue);
-            color: #000;
-            box-shadow: 0 0 30px var(--neon-blue);
+        .btn:active {
+            transform: scale(0.95);
         }
 
-        /* 嘲讽文字动画 */
         #insult-box {
             position: absolute;
             bottom: 50px;
             width: 100%;
             text-align: center;
-            color: var(--neon-pink);
+            color: #ff007f;
             font-style: italic;
             opacity: 0;
             transition: opacity 0.3s;
+            pointer-events: none;
+            z-index: 60;
         }
 
         .glitch-text {
@@ -161,6 +162,9 @@
         H = window.innerHeight;
         canvas.width = W;
         canvas.height = H;
+        if (gameState === 'PLAY' || gameState === 'FAIL') {
+            initLevel(currentLevel);
+        }
     }
     window.addEventListener('resize', resize);
     resize();
@@ -170,6 +174,7 @@
     let deaths = 0;
     let particles = [];
     let obstacles = [];
+    let target = { x: 0, y: 0, r: 25 };
     let mouse = { x: W/2, y: H/2, active: false };
 
     const insults = [
@@ -197,17 +202,15 @@
 
         update() {
             if (mouse.active) {
-                // 引力逻辑：向手指方向加速
                 let dx = mouse.x - this.x;
                 let dy = mouse.y - this.y;
                 let dist = Math.sqrt(dx*dx + dy*dy);
-                
-                // 恶意点1：距离越近，引力越不稳定（量子波动）
-                let flux = Math.sin(Date.now() * 0.01) * 2;
-                let force = (dist < 50) ? (dist * 0.01) : this.accel;
-
-                this.vx += (dx / dist) * force + flux;
-                this.vy += (dy / dist) * force;
+                if (dist > 0) {
+                    let flux = Math.sin(Date.now() * 0.01) * 2;
+                    let force = (dist < 50) ? (dist * 0.01) : this.accel;
+                    this.vx += (dx / dist) * force + flux;
+                    this.vy += (dy / dist) * force;
+                }
             }
 
             this.vx *= this.friction;
@@ -215,18 +218,15 @@
             this.x += this.vx;
             this.y += this.vy;
 
-            // 拖尾
             this.trail.push({x: this.x, y: this.y});
             if (this.trail.length > 20) this.trail.shift();
 
-            // 边界检查
             if (this.x < 0 || this.x > W || this.y < 0 || this.y > H) {
                 fail();
             }
         }
 
         draw() {
-            // 画拖尾
             this.trail.forEach((p, i) => {
                 ctx.beginPath();
                 ctx.arc(p.x, p.y, (i/20) * this.r, 0, Math.PI*2);
@@ -234,7 +234,6 @@
                 ctx.fill();
             });
 
-            // 画核心
             ctx.beginPath();
             ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
             ctx.fillStyle = '#fff';
@@ -258,11 +257,9 @@
             if (this.type === 'MOVING') {
                 this.x = this.baseX + Math.sin(Date.now() * 0.002 + this.phase) * 50;
             }
-            // 恶意点2：视差欺骗，墙壁会随着鼠标微动
             let offsetX = (mouse.x - W/2) * 0.02;
             let offsetY = (mouse.y - H/2) * 0.02;
 
-            // 碰撞检测
             let cx = Math.max(this.x + offsetX, Math.min(core.x, this.x + offsetX + this.w));
             let cy = Math.max(this.y + offsetY, Math.min(core.y, this.y + offsetY + this.h));
             let dist = Math.sqrt((core.x - cx)**2 + (core.y - cy)**2);
@@ -280,8 +277,6 @@
             ctx.strokeStyle = this.type === 'MOVING' ? '#ff007f' : 'rgba(255,255,255,0.2)';
             ctx.lineWidth = 2;
             ctx.strokeRect(this.x + offsetX, this.y + offsetY, this.w, this.h);
-            
-            // 内部填充微弱渐变
             ctx.fillStyle = this.type === 'MOVING' ? 'rgba(255, 0, 127, 0.1)' : 'rgba(255, 255, 255, 0.03)';
             ctx.fillRect(this.x + offsetX, this.y + offsetY, this.w, this.h);
             ctx.restore();
@@ -294,14 +289,11 @@
         obstacles = [];
         core = new Core();
         
-        // 简单的关卡生成逻辑
         if (lvl === 1) {
-            // 第一关：简单的通道，但有移动障碍
             obstacles.push(new Wall(0, H/2, W*0.4, 40));
             obstacles.push(new Wall(W*0.6, H/2 - 100, W*0.4, 40));
             obstacles.push(new Wall(W/2 - 50, 200, 100, 20, 'MOVING'));
         } else {
-            // 后续关卡：增加复杂度和恶意移动
             for(let i=0; i<lvl+2; i++) {
                 obstacles.push(new Wall(
                     Math.random()*(W-100), 
@@ -311,8 +303,6 @@
                 ));
             }
         }
-
-        // 终点区
         target = { x: W/2, y: 50, r: 25 };
     }
 
@@ -322,7 +312,6 @@
         deathEl.innerText = deaths;
         gameState = 'FAIL';
         
-        // 恶意点3：花屏闪烁
         canvas.style.filter = 'invert(1) hue-rotate(180deg)';
         insultBox.innerText = insults[Math.floor(Math.random() * insults.length)];
         insultBox.style.opacity = 1;
@@ -331,12 +320,14 @@
         setTimeout(() => {
             canvas.style.filter = 'none';
             insultBox.style.opacity = 0;
+            insultBox.classList.remove('glitch-text');
             initLevel(currentLevel);
             gameState = 'PLAY';
         }, 1200);
     }
 
     function win() {
+        if (gameState !== 'PLAY') return;
         currentLevel++;
         levelEl.innerText = currentLevel;
         gameState = 'WIN';
@@ -348,7 +339,6 @@
     function loop() {
         ctx.clearRect(0, 0, W, H);
 
-        // 背景微弱粒子
         if (Math.random() > 0.9) particles.push({x: Math.random()*W, y: Math.random()*H, s: Math.random()*2, o: 1});
         particles.forEach((p, i) => {
             p.o -= 0.01;
@@ -357,38 +347,33 @@
             if(p.o <= 0) particles.splice(i, 1);
         });
 
-        // 绘制终点
-        ctx.beginPath();
-        ctx.arc(target.x, target.y, target.r + Math.sin(Date.now()*0.01)*5, 0, Math.PI*2);
-        ctx.strokeStyle = '#00d2ff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.fillStyle = 'rgba(0, 210, 255, 0.2)';
-        ctx.fill();
+        if (gameState === 'PLAY' || gameState === 'FAIL' || gameState === 'IDLE') {
+            // Draw Target
+            ctx.beginPath();
+            ctx.arc(target.x || W/2, target.y || 50, (target.r || 25) + Math.sin(Date.now()*0.01)*5, 0, Math.PI*2);
+            ctx.strokeStyle = '#00d2ff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(0, 210, 255, 0.2)';
+            ctx.fill();
 
-        if (gameState === 'PLAY' || gameState === 'FAIL') {
-            core.update();
-            obstacles.forEach(o => o.update());
-
-            // 检查过关
-            let dx = core.x - target.x;
-            let dy = core.y - target.y;
-            if (Math.sqrt(dx*dx + dy*dy) < target.r) {
-                win();
+            if (gameState === 'PLAY' || gameState === 'FAIL') {
+                core.update();
+                obstacles.forEach(o => o.update());
+                let dx = core.x - target.x;
+                let dy = core.y - target.y;
+                if (Math.sqrt(dx*dx + dy*dy) < target.r) {
+                    win();
+                }
             }
-        }
 
-        obstacles.forEach(o => o.draw());
-        core.draw();
+            obstacles.forEach(o => o.draw());
+            core.draw();
+        }
 
         requestAnimationFrame(loop);
     }
 
-    function varColor(name) {
-        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    }
-
-    // 交互
     const handleMove = (e) => {
         let t = e.touches ? e.touches[0] : e;
         mouse.x = t.clientX;
@@ -397,10 +382,13 @@
     };
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('touchstart', (e) => { 
-        e.preventDefault(); 
+        if (gameState === 'PLAY') e.preventDefault(); 
         handleMove(e);
-    });
-    window.addEventListener('touchmove', handleMove);
+    }, { passive: false });
+    window.addEventListener('touchmove', (e) => {
+        if (gameState === 'PLAY') e.preventDefault();
+        handleMove(e);
+    }, { passive: false });
     window.addEventListener('touchend', () => mouse.active = false);
     window.addEventListener('mouseup', () => mouse.active = false);
 
@@ -413,6 +401,7 @@
         }, 500);
     };
 
+    initLevel(1); // Pre-init level so variables are ready
     loop();
 </script>
 </body>
