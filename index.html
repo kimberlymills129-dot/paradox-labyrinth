@@ -157,6 +157,14 @@
     const startBtn = document.getElementById('startBtn');
 
     let W, H;
+    let gameState = 'IDLE';
+    let currentLevel = 1;
+    let deaths = 0;
+    let particles = [];
+    let obstacles = [];
+    let target = { x: 0, y: 0, r: 25 };
+    let mouse = { x: 0, y: 0, active: false };
+
     function resize() {
         W = window.innerWidth;
         H = window.innerHeight;
@@ -168,14 +176,6 @@
     }
     window.addEventListener('resize', resize);
     resize();
-
-    let gameState = 'IDLE';
-    let currentLevel = 1;
-    let deaths = 0;
-    let particles = [];
-    let obstacles = [];
-    let target = { x: 0, y: 0, r: 25 };
-    let mouse = { x: W/2, y: H/2, active: false };
 
     const insults = [
         "这个操作...我很难评价。",
