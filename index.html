@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>悖论迷宫 - 纯粹的恶意</title>
+    <style>
+        :root {
+            --neon-blue: #00d2ff;
+            --neon-pink: #ff007f;
+            --bg-dark: #0a0a12;
+            --glass: rgba(255, 255, 255, 0.1);
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            background: var(--bg-dark);
+            color: #fff;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+
+        #app-container {
+            position: relative;
+            width: 100vw; height: 100vh;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+        }
+
+        canvas {
+            display: block;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #0a0a12 100%);
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            cursor: none;
+        }
+
+        /* 玻璃拟态 UI */
+        #ui-layer {
+            position: absolute;
+            top: 20px; left: 20px; right: 20px;
+            display: flex; justify-content: space-between;
+            pointer-events: none;
+        }
+
+        .stat-card {
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(10, 10, 18, 0.85);
+            backdrop-filter: blur(8px);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 100;
+            transition: opacity 0.5s;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 0;
+            background: linear-gradient(to right, var(--neon-blue), var(--neon-pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 20px rgba(0, 210, 255, 0.3);
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 0.9rem;
+        }
+
+        .btn {
+            background: transparent;
+            border: 1px solid var(--neon-blue);
+            color: var(--neon-blue);
+            padding: 15px 50px;
+            font-size: 1.1rem;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+        }
+
+        .btn:hover {
+            background: var(--neon-blue);
+            color: #000;
+            box-shadow: 0 0 30px var(--neon-blue);
+        }
+
+        /* 嘲讽文字动画 */
+        #insult-box {
+            position: absolute;
+            bottom: 50px;
+            width: 100%;
+            text-align: center;
+            color: var(--neon-pink);
+            font-style: italic;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .glitch-text {
+            animation: glitch 0.3s infinite;
+        }
+
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+            100% { transform: translate(0); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <div id="ui-layer">
+        <div class="stat-card">Level: <span id="level-val">1</span></div>
+        <div class="stat-card">Deaths: <span id="death-val">0</span></div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="insult-box"></div>
+
+    <div id="overlay">
+        <h1>PARADOX</h1>
+        <p class="subtitle">不要触碰任何东西，包括你的信心</p>
+        <button class="btn" id="startBtn">进入悖论</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const levelEl = document.getElementById('level-val');
+    const deathEl = document.getElementById('death-val');
+    const insultBox = document.getElementById('insult-box');
+    const overlay = document.getElementById('overlay');
+    const startBtn = document.getElementById('startBtn');
+
+    let W, H;
+    function resize() {
+        W = window.innerWidth;
+        H = window.innerHeight;
+        canvas.width = W;
+        canvas.height = H;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    let gameState = 'IDLE';
+    let currentLevel = 1;
+    let deaths = 0;
+    let particles = [];
+    let obstacles = [];
+    let mouse = { x: W/2, y: H/2, active: false };
+
+    const insults = [
+        "这个操作...我很难评价。",
+        "你是不是把手机拿反了？",
+        "由于你的表现，AI 决定推迟统治世界。",
+        "恭喜你，又浪费了 3 秒寿命。",
+        "这是一个迷宫，不是撞墙模拟器。",
+        "你的预判和我的股票账户一样糟糕。",
+        "别难过，有些人天生就不擅长动手指。",
+        "你确定你是在控制它，而不是在求它自杀？"
+    ];
+
+    class Core {
+        constructor() {
+            this.x = W / 2;
+            this.y = H - 100;
+            this.r = 8;
+            this.vx = 0;
+            this.vy = 0;
+            this.friction = 0.98;
+            this.accel = 0.15;
+            this.trail = [];
+        }
+
+        update() {
+            if (mouse.active) {
+                // 引力逻辑：向手指方向加速
+                let dx = mouse.x - this.x;
+                let dy = mouse.y - this.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+                
+                // 恶意点1：距离越近，引力越不稳定（量子波动）
+                let flux = Math.sin(Date.now() * 0.01) * 2;
+                let force = (dist < 50) ? (dist * 0.01) : this.accel;
+
+                this.vx += (dx / dist) * force + flux;
+                this.vy += (dy / dist) * force;
+            }
+
+            this.vx *= this.friction;
+            this.vy *= this.friction;
+            this.x += this.vx;
+            this.y += this.vy;
+
+            // 拖尾
+            this.trail.push({x: this.x, y: this.y});
+            if (this.trail.length > 20) this.trail.shift();
+
+            // 边界检查
+            if (this.x < 0 || this.x > W || this.y < 0 || this.y > H) {
+                fail();
+            }
+        }
+
+        draw() {
+            // 画拖尾
+            this.trail.forEach((p, i) => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, (i/20) * this.r, 0, Math.PI*2);
+                ctx.fillStyle = `rgba(0, 210, 255, ${i/20})`;
+                ctx.fill();
+            });
+
+            // 画核心
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
+            ctx.fillStyle = '#fff';
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#00d2ff';
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+    }
+
+    class Wall {
+        constructor(x, y, w, h, type = 'STATIC') {
+            this.x = x; this.y = y;
+            this.w = w; this.h = h;
+            this.type = type;
+            this.baseX = x;
+            this.phase = Math.random() * Math.PI * 2;
+        }
+
+        update() {
+            if (this.type === 'MOVING') {
+                this.x = this.baseX + Math.sin(Date.now() * 0.002 + this.phase) * 50;
+            }
+            // 恶意点2：视差欺骗，墙壁会随着鼠标微动
+            let offsetX = (mouse.x - W/2) * 0.02;
+            let offsetY = (mouse.y - H/2) * 0.02;
+
+            // 碰撞检测
+            let cx = Math.max(this.x + offsetX, Math.min(core.x, this.x + offsetX + this.w));
+            let cy = Math.max(this.y + offsetY, Math.min(core.y, this.y + offsetY + this.h));
+            let dist = Math.sqrt((core.x - cx)**2 + (core.y - cy)**2);
+
+            if (dist < core.r) {
+                fail();
+            }
+        }
+
+        draw() {
+            let offsetX = (mouse.x - W/2) * 0.02;
+            let offsetY = (mouse.y - H/2) * 0.02;
+
+            ctx.save();
+            ctx.strokeStyle = this.type === 'MOVING' ? '#ff007f' : 'rgba(255,255,255,0.2)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(this.x + offsetX, this.y + offsetY, this.w, this.h);
+            
+            // 内部填充微弱渐变
+            ctx.fillStyle = this.type === 'MOVING' ? 'rgba(255, 0, 127, 0.1)' : 'rgba(255, 255, 255, 0.03)';
+            ctx.fillRect(this.x + offsetX, this.y + offsetY, this.w, this.h);
+            ctx.restore();
+        }
+    }
+
+    let core = new Core();
+
+    function initLevel(lvl) {
+        obstacles = [];
+        core = new Core();
+        
+        // 简单的关卡生成逻辑
+        if (lvl === 1) {
+            // 第一关：简单的通道，但有移动障碍
+            obstacles.push(new Wall(0, H/2, W*0.4, 40));
+            obstacles.push(new Wall(W*0.6, H/2 - 100, W*0.4, 40));
+            obstacles.push(new Wall(W/2 - 50, 200, 100, 20, 'MOVING'));
+        } else {
+            // 后续关卡：增加复杂度和恶意移动
+            for(let i=0; i<lvl+2; i++) {
+                obstacles.push(new Wall(
+                    Math.random()*(W-100), 
+                    Math.random()*(H-300) + 100, 
+                    100, 20, 
+                    Math.random() > 0.5 ? 'MOVING' : 'STATIC'
+                ));
+            }
+        }
+
+        // 终点区
+        target = { x: W/2, y: 50, r: 25 };
+    }
+
+    function fail() {
+        if (gameState !== 'PLAY') return;
+        deaths++;
+        deathEl.innerText = deaths;
+        gameState = 'FAIL';
+        
+        // 恶意点3：花屏闪烁
+        canvas.style.filter = 'invert(1) hue-rotate(180deg)';
+        insultBox.innerText = insults[Math.floor(Math.random() * insults.length)];
+        insultBox.style.opacity = 1;
+        insultBox.classList.add('glitch-text');
+
+        setTimeout(() => {
+            canvas.style.filter = 'none';
+            insultBox.style.opacity = 0;
+            initLevel(currentLevel);
+            gameState = 'PLAY';
+        }, 1200);
+    }
+
+    function win() {
+        currentLevel++;
+        levelEl.innerText = currentLevel;
+        gameState = 'WIN';
+        alert("别高兴太早，这只是热身。进入第 " + currentLevel + " 关...");
+        initLevel(currentLevel);
+        gameState = 'PLAY';
+    }
+
+    function loop() {
+        ctx.clearRect(0, 0, W, H);
+
+        // 背景微弱粒子
+        if (Math.random() > 0.9) particles.push({x: Math.random()*W, y: Math.random()*H, s: Math.random()*2, o: 1});
+        particles.forEach((p, i) => {
+            p.o -= 0.01;
+            ctx.fillStyle = `rgba(255,255,255,${p.o})`;
+            ctx.fillRect(p.x, p.y, p.s, p.s);
+            if(p.o <= 0) particles.splice(i, 1);
+        });
+
+        // 绘制终点
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, target.r + Math.sin(Date.now()*0.01)*5, 0, Math.PI*2);
+        ctx.strokeStyle = '#00d2ff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(0, 210, 255, 0.2)';
+        ctx.fill();
+
+        if (gameState === 'PLAY' || gameState === 'FAIL') {
+            core.update();
+            obstacles.forEach(o => o.update());
+
+            // 检查过关
+            let dx = core.x - target.x;
+            let dy = core.y - target.y;
+            if (Math.sqrt(dx*dx + dy*dy) < target.r) {
+                win();
+            }
+        }
+
+        obstacles.forEach(o => o.draw());
+        core.draw();
+
+        requestAnimationFrame(loop);
+    }
+
+    function varColor(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    // 交互
+    const handleMove = (e) => {
+        let t = e.touches ? e.touches[0] : e;
+        mouse.x = t.clientX;
+        mouse.y = t.clientY;
+        mouse.active = true;
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('touchstart', (e) => { 
+        e.preventDefault(); 
+        handleMove(e);
+    });
+    window.addEventListener('touchmove', handleMove);
+    window.addEventListener('touchend', () => mouse.active = false);
+    window.addEventListener('mouseup', () => mouse.active = false);
+
+    startBtn.onclick = () => {
+        overlay.style.opacity = 0;
+        setTimeout(() => {
+            overlay.style.display = 'none';
+            initLevel(1);
+            gameState = 'PLAY';
+        }, 500);
+    };
+
+    loop();
+</script>
+</body>
+</html>
