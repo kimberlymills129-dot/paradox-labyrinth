@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>小小围棋 - AI 智能识谱</title>
+    <style>
+        :root {
+            --board-color: #dec08a;
+            --primary: #2c3e50;
+            --accent: #e67e22;
+        }
+
+        body {
+            margin: 0; padding: 0;
+            background-color: #f5f5f5;
+            font-family: 'PingFang SC', sans-serif;
+            display: flex; flex-direction: column; align-items: center;
+        }
+
+        header {
+            width: 100%; padding: 15px;
+            background: var(--primary);
+            color: white; text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+
+        #main-container {
+            width: 100%; max-width: 500px;
+            padding: 10px; box-sizing: border-box;
+        }
+
+        /* 棋盘容器 */
+        #board-wrapper {
+            position: relative;
+            width: 100%; padding-top: 100%;
+            background-color: var(--board-color);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        #go-canvas {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+        }
+
+        /* 控制面板 */
+        .controls {
+            margin-top: 20px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+        }
+
+        .btn {
+            padding: 12px; border: none; border-radius: 8px;
+            background: white; color: var(--primary);
+            font-size: 14px; font-weight: bold;
+            cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center;
+            gap: 8px;
+        }
+
+        .btn:active { transform: scale(0.95); }
+        .btn.primary { background: var(--primary); color: white; }
+        .btn.accent { background: var(--accent); color: white; }
+
+        .result-panel {
+            margin-top: 20px;
+            background: white; padding: 15px;
+            border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .score-row {
+            display: flex; justify-content: space-between;
+            margin: 5px 0; font-size: 1.1rem;
+        }
+
+        .black-text { color: #000; font-weight: bold; }
+        .white-text { color: #888; font-weight: bold; }
+
+        #upload-input { display: none; }
+
+        .loading-overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            color: white; z-index: 1000;
+        }
+        
+        .spinner {
+            width: 40px; height: 40px; border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--accent); border-radius: 50%;
+            animation: spin 1s linear infinite; margin-bottom: 15px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<header>
+    <h2>小小围棋识谱 ✨</h2>
+</header>
+
+<div id="main-container">
+    <div id="board-wrapper">
+        <canvas id="go-canvas"></canvas>
+    </div>
+
+    <div class="result-panel">
+        <div class="score-row">
+            <span>黑棋：<span id="black-score" class="black-text">0</span> 子</span>
+            <span>白棋：<span id="white-score" class="white-text">0</span> 子</span>
+        </div>
+        <div id="winner-msg" style="text-align: center; margin-top: 10px; font-weight: bold; color: var(--accent);">
+            等待识别...
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn primary" onclick="document.getElementById('upload-input').click()">
+            📷 上传照片
+        </button>
+        <button class="btn accent" onclick="calculateScore()">
+            🧮 重新计算
+        </button>
+        <button class="btn" onclick="resetBoard()">
+            🔄 清空棋盘
+        </button>
+        <button class="btn" onclick="toggleEditMode()" id="edit-btn">
+            ✍️ 编辑模式: 关
+        </button>
+    </div>
+    <input type="file" id="upload-input" accept="image/*">
+</div>
+
+<div class="loading-overlay" id="loading">
+    <div class="spinner"></div>
+    <div id="loading-text">AI 正在识别棋谱...</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('go-canvas');
+    const ctx = canvas.getContext('2d');
+    const uploadInput = document.getElementById('upload-input');
+    const loading = document.getElementById('loading');
+
+    const GRID_SIZE = 19;
+    let cellSize = 0;
+    let padding = 0;
+    
+    // 棋盘数据：0-空，1-黑，2-白
+    let board = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0));
+    let editMode = false;
+    let currentStone = 1; // 默认放黑子
+
+    function initCanvas() {
+        const size = canvas.parentElement.offsetWidth;
+        canvas.width = size * window.devicePixelRatio;
+        canvas.height = size * window.devicePixelRatio;
+        ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        
+        padding = size * 0.05;
+        cellSize = (size - padding * 2) / (GRID_SIZE - 1);
+        drawBoard();
+    }
+
+    function drawBoard() {
+        const size = canvas.width / window.devicePixelRatio;
+        ctx.clearRect(0, 0, size, size);
+
+        // 绘制线条
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < GRID_SIZE; i++) {
+            // 横线
+            ctx.beginPath();
+            ctx.moveTo(padding, padding + i * cellSize);
+            ctx.lineTo(size - padding, padding + i * cellSize);
+            ctx.stroke();
+            // 纵线
+            ctx.beginPath();
+            ctx.moveTo(padding + i * cellSize, padding);
+            ctx.lineTo(padding + i * cellSize, size - padding);
+            ctx.stroke();
+        }
+
+        // 绘制星位
+        const stars = [3, 9, 15];
+        ctx.fillStyle = '#333';
+        stars.forEach(r => {
+            stars.forEach(c => {
+                ctx.beginPath();
+                ctx.arc(padding + c * cellSize, padding + r * cellSize, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        });
+
+        // 绘制棋子
+        for (let r = 0; r < GRID_SIZE; r++) {
+            for (let c = 0; c < GRID_SIZE; c++) {
+                if (board[r][c] !== 0) {
+                    drawStone(r, c, board[r][c]);
+                }
+            }
+        }
+    }
+
+    function drawStone(r, c, type) {
+        const x = padding + c * cellSize;
+        const y = padding + r * cellSize;
+        const rad = cellSize * 0.45;
+
+        ctx.beginPath();
+        ctx.arc(x, y, rad, 0, Math.PI * 2);
+        
+        if (type === 1) { // 黑子
+            const grad = ctx.createRadialGradient(x-rad/3, y-rad/3, rad/10, x, y, rad);
+            grad.addColorStop(0, '#666');
+            grad.addColorStop(1, '#000');
+            ctx.fillStyle = grad;
+        } else { // 白子
+            const grad = ctx.createRadialGradient(x-rad/3, y-rad/3, rad/10, x, y, rad);
+            grad.addColorStop(0, '#fff');
+            grad.addColorStop(1, '#ccc');
+            ctx.fillStyle = grad;
+            ctx.strokeStyle = '#999';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+        ctx.fill();
+    }
+
+    // 简易数子算法（中国规则核心：子空皆地）
+    function calculateScore() {
+        let black = 0;
+        let white = 0;
+        
+        // 1. 先数棋盘上的活子
+        for(let r=0; r<GRID_SIZE; r++) {
+            for(let c=0; c<GRID_SIZE; c++) {
+                if(board[r][c] === 1) black++;
+                if(board[r][c] === 2) white++;
+            }
+        }
+
+        // 2. 简单的领地计算（洪水填充）
+        const visited = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(false));
+        for(let r=0; r<GRID_SIZE; r++) {
+            for(let c=0; c<GRID_SIZE; c++) {
+                if(board[r][c] === 0 && !visited[r][c]) {
+                    const area = [];
+                    const result = floodFill(r, c, visited, area);
+                    if(result === 1) black += area.length;
+                    if(result === 2) white += area.length;
+                }
+            }
+        }
+
+        document.getElementById('black-score').innerText = black;
+        document.getElementById('white-score').innerText = white;
+        
+        const komi = 7.5; // 中国规则贴目
+        const diff = black - (GRID_SIZE * GRID_SIZE / 2 + komi / 2);
+        
+        if (black > 184.25) {
+            document.getElementById('winner-msg').innerText = `黑棋胜！(领先 ${ (black - 184.25).toFixed(2) } 子)`;
+        } else {
+            document.getElementById('winner-msg').innerText = `白棋胜！(领先 ${ (184.25 - black).toFixed(2) } 子)`;
+        }
+    }
+
+    function floodFill(r, c, visited, area) {
+        const stack = [[r, c]];
+        let owner = null; // 0-混合, 1-黑, 2-白
+        let touchBlack = false;
+        let touchWhite = false;
+
+        while(stack.length > 0) {
+            const [currR, currC] = stack.pop();
+            if(currR < 0 || currR >= GRID_SIZE || currC < 0 || currC >= GRID_SIZE) continue;
+            if(visited[currR][currC]) continue;
+            
+            if(board[currR][currC] === 0) {
+                visited[currR][currC] = true;
+                area.push([currR, currC]);
+                stack.push([currR-1, currC], [currR+1, currC], [currR, currC-1], [currR, currC+1]);
+            } else if(board[currR][currC] === 1) {
+                touchBlack = true;
+            } else if(board[currR][currC] === 2) {
+                touchWhite = true;
+            }
+        }
+
+        if(touchBlack && !touchWhite) return 1;
+        if(touchWhite && !touchBlack) return 2;
+        return 0;
+    }
+
+    function resetBoard() {
+        board = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0));
+        drawBoard();
+        document.getElementById('winner-msg').innerText = "等待识别...";
+    }
+
+    function toggleEditMode() {
+        editMode = !editMode;
+        document.getElementById('edit-btn').innerText = `✍️ 编辑模式: ${editMode ? '黑' : '关'}`;
+        if(editMode) currentStone = 1;
+    }
+
+    // 点击交互
+    canvas.addEventListener('click', (e) => {
+        if(!editMode) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (canvas.width / rect.width / window.devicePixelRatio);
+        const y = (e.clientY - rect.top) * (canvas.height / rect.height / window.devicePixelRatio);
+
+        const c = Math.round((x - padding) / cellSize);
+        const r = Math.round((y - padding) / cellSize);
+
+        if(r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) {
+            if(board[r][c] === currentStone) {
+                board[r][c] = 0; // 再次点击取消
+            } else {
+                board[r][c] = currentStone;
+            }
+            drawBoard();
+            calculateScore();
+            // 切换棋子颜色
+            currentStone = board[r][c] === 0 ? currentStone : (currentStone === 1 ? 2 : 1);
+            document.getElementById('edit-btn').innerText = `✍️ 编辑模式: ${currentStone === 1 ? '黑' : '白'}`;
+        }
+    });
+
+    // 模拟识别逻辑（你需要上传图片，我来调用 python 处理）
+    uploadInput.addEventListener('change', function(e) {
+        if(!e.target.files[0]) return;
+        loading.style.display = 'flex';
+        
+        // 此处应将图片发送给“小小”，由于是 H5 演示，我将提示用户在聊天窗口发送图片
+        setTimeout(() => {
+            loading.style.display = 'none';
+            alert("请在对话框中将这张围棋照片发送给我（小小），我会分析棋局并为你同步到这个棋盘中！");
+        }, 1500);
+    });
+
+    window.addEventListener('resize', initCanvas);
+    window.onload = initCanvas;
+</script>
+</body>
+</html>
